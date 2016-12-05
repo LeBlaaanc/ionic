@@ -1,7 +1,9 @@
-import { Component, Input, HostBinding, ElementRef, ChangeDetectionStrategy, ViewEncapsulation, NgZone } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, HostBinding, Input, NgZone, OnDestroy, Optional, Renderer, ViewEncapsulation } from '@angular/core';
 
-import { nativeRaf } from '../../util/dom';
-import { isPresent } from '../../util/util';
+import { Content } from '../content/content';
+import { DomController } from '../../util/dom-controller';
+import { ImgLoader, ImgResponseMessage } from './img-loader';
+import { isPresent, isTrueProperty } from '../../util/util';
 import { Platform } from '../../platform/platform';
 
 
@@ -10,104 +12,208 @@ import { Platform } from '../../platform/platform';
  */
 @Component({
   selector: 'ion-img',
-  template:
-    '<div class="img-placeholder" [style.height]="_h" [style.width]="_w"></div>',
+  template: '<img>',
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
 })
-export class Img {
-  _src: string = '';
-  _normalizeSrc: string = '';
-  _imgs: HTMLImageElement[] = [];
-  _w: string;
-  _h: string;
-  _enabled: boolean = true;
-  _init: boolean;
+export class Img implements OnDestroy {
+  /** @internal */
+  _src: string;
+  /** @internal */
+  _requestingSrc: string;
+  /** @internal */
+  _renderedSrc: string;
+  /** @internal */
+  _tmpDataUri: string;
+  /** @internal */
+  _cache: boolean = true;
+  /** @internal */
+  _lazy: boolean = true;
+  /** @internal */
+  _ww: boolean = true;
+  /** @internal */
+  _cb: Function;
+  /** @internal */
+  _bounds: any;
+  /** @internal */
+  _rect: any;
 
-  constructor(private _elementRef: ElementRef, private _platform: Platform, private _zone: NgZone) {}
+  /** @private */
+  canRequest: boolean;
+  /** @private */
+  canRender: boolean;
+  /** @private */
+  _w: string;
+  /** @private */
+  _h: string;
+
+
+  constructor(
+    private _ldr: ImgLoader,
+    private _elementRef: ElementRef,
+    private _renderer: Renderer,
+    private _platform: Platform,
+    private _zone: NgZone,
+    @Optional() private _content: Content,
+    private _dom: DomController
+  ) {
+    if (!this._content) {
+      console.warn(`ion-img can only be used within an ion-content`);
+    } else {
+      this._content.addImg(this);
+    }
+    this._isLoaded(false);
+  }
 
   @Input()
-  set src(val: string) {
-    let tmpImg = new Image();
-    tmpImg.src = isPresent(val) ? val : '';
+  get src(): string {
+    return this._src;
+  }
+  set src(newSrc: string) {
+    if (newSrc !== this._src) {
+      this.reset();
 
-    this._src = isPresent(val) ? val : '';
-    this._normalizeSrc = tmpImg.src;
+      // update to the new src
+      this._src = newSrc;
 
-    if (this._init) {
-      this._update();
+      // reset any existing datauri we might be holding onto
+      this._tmpDataUri = null;
+
+      this.update();
     }
   }
 
-  ngOnInit() {
-    this._init = true;
-    this._update();
+  reset() {
+    if (this._requestingSrc) {
+      // abort any active requests
+      console.debug(`abortRequest ${this._requestingSrc} ${Date.now()}`);
+      this._ldr.abort(this._requestingSrc);
+      this._requestingSrc = null;
+    }
+    if (this._renderedSrc) {
+      // clear out the currently rendered img
+      console.debug(`clearRender ${this._renderedSrc} ${Date.now()}`);
+      this._renderedSrc = null;
+      this._isLoaded(false);
+    }
   }
 
-  _update() {
-    if (this._enabled && this._src !== '') {
-      // actively update the image
+  update() {
+    if (this._src && this._content.isImgsRefreshable()) {
+      if (this.canRequest && (this._src !== this._renderedSrc && this._src !== this._requestingSrc) && !this._tmpDataUri) {
+        console.debug(`request ${this._src} ${Date.now()}`);
+        this._requestingSrc = this._src;
 
-      for (var i = this._imgs.length - 1; i >= 0; i--) {
-        if (this._imgs[i].src === this._normalizeSrc) {
-          // this is the active image
-          if (this._imgs[i].complete) {
-            this._loaded(true);
-          }
+        this._cb = (msg: ImgResponseMessage) => {
+          this._loadResponse(msg);
+        };
 
-        } else {
-          // no longer the active image
-          if (this._imgs[i].parentElement) {
-            this._imgs[i].parentElement.removeChild(this._imgs[i]);
-          }
-          this._imgs.splice(i, 1);
-        }
+        this._ldr.load(this._src, this._cache, this._cb);
       }
 
-      if (!this._imgs.length) {
-        this._zone.runOutsideAngular(() => {
-          let img = new Image();
-          img.style.width = this._width;
-          img.style.height = this._height;
-
-          if (isPresent(this.alt)) {
-            img.alt = this.alt;
+      if (this.canRender && this._tmpDataUri && this._src !== this._renderedSrc) {
+        // we can render and we have a datauri to render
+        this._renderedSrc = this._src;
+        this._dom.write(() => {
+          if (this._tmpDataUri) {
+            console.debug(`render ${this._src} ${Date.now()}`);
+            this._isLoaded(true);
+            this._srcAttr(this._tmpDataUri);
+            this._tmpDataUri = null;
           }
-          if (isPresent(this.title)) {
-            img.title = this.title;
-          }
-
-          img.addEventListener('load', () => {
-            if (img.src === this._normalizeSrc) {
-              this._elementRef.nativeElement.appendChild(img);
-              nativeRaf(() => {
-                this._update();
-              });
-            }
-          });
-
-          img.src = this._src;
-
-          this._imgs.push(img);
-          this._loaded(false);
         });
       }
-
-    } else {
-      // do not actively update the image
-      if (!this._imgs.some(img => img.src === this._normalizeSrc)) {
-        this._loaded(false);
-      }
     }
   }
 
-  _loaded(isLoaded: boolean) {
-    this._elementRef.nativeElement.classList[isLoaded ? 'add' : 'remove']('img-loaded');
+  /**
+   * @internal
+   */
+  _loadResponse(msg: ImgResponseMessage) {
+    this._requestingSrc = null;
+
+    if (msg.status === 200) {
+      // success :)
+      this._tmpDataUri = msg.data;
+      this.update();
+
+    } else {
+      // error :(
+      console.error(`img, status: ${msg.status} ${msg.msg}`);
+      this._renderedSrc = this._tmpDataUri = null;
+      this._dom.write(() => {
+        this._isLoaded(false);
+      });
+    }
   }
 
-  enable(shouldEnable: boolean) {
-    this._enabled = shouldEnable;
-    this._update();
+  /**
+   * @internal
+   */
+  _isLoaded(isLoaded: boolean) {
+    const renderer = this._renderer;
+    const ele = this._elementRef.nativeElement;
+    renderer.setElementClass(ele, 'img-loaded', isLoaded);
+    renderer.setElementClass(ele, 'img-unloaded', !isLoaded);
+  }
+
+  /**
+   * @internal
+   */
+  _srcAttr(srcAttr: string) {
+    this._renderer.setElementAttribute(this._elementRef.nativeElement.firstChild, 'src', srcAttr);
+  }
+
+  get top(): number {
+    const bounds = this._getBounds();
+    return bounds && bounds.top || 0;
+  }
+
+  get bottom(): number {
+    const bounds = this._getBounds();
+    return bounds && bounds.bottom || 0;
+  }
+
+  private _getBounds() {
+    if (this._bounds) {
+      return this._bounds;
+    }
+    if (!this._rect) {
+      this._rect = (<HTMLElement>this._elementRef.nativeElement).getBoundingClientRect();
+      console.debug(`img, ${this._src}, read, ${this._rect.top} - ${this._rect.bottom}`);
+    }
+    return this._rect;
+  }
+
+  @Input()
+  set bounds(b: any) {
+    if (isPresent(b)) {
+      this._bounds = b;
+    }
+  }
+
+  @Input()
+  get lazyLoad(): boolean {
+    return this._lazy;
+  }
+  set lazyLoad(val: boolean) {
+    this._lazy = isTrueProperty(val);
+  }
+
+  @Input()
+  get webWorker(): boolean {
+    return this._ww;
+  }
+  set webWorker(val: boolean) {
+    this._ww = isTrueProperty(val);
+  }
+
+  @Input()
+  get cache(): boolean {
+    return this._cache;
+  }
+  set cache(val: boolean) {
+    this._cache = isTrueProperty(val);
   }
 
   @Input()
@@ -134,6 +240,12 @@ export class Img {
     return isPresent(this._h) ? this._h : '';
   }
 
+  ngOnDestroy() {
+    this._ldr.cancelLoad(this._cb);
+    this._cb = null;
+    this._content && this._content.removeImg(this);
+  }
+
 }
 
 function getUnitValue(val: any): string {
@@ -151,4 +263,9 @@ function getUnitValue(val: any): string {
     }
   }
   return '';
+}
+
+
+export function isValidSrc(src: string) {
+  return isPresent(src) && src !== '';
 }
