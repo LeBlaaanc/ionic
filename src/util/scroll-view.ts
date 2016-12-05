@@ -1,7 +1,7 @@
 import { Subject } from 'rxjs/Subject';
 
 import { assert } from './util';
-import { CSS, pointerCoord, rafFrames } from './dom';
+import { CSS, nativeRaf, pointerCoord, rafFrames } from './dom';
 import { DomController } from './dom-controller';
 import { eventOptions, listenEvent } from './ui-event-manager';
 
@@ -437,11 +437,11 @@ export class ScrollView {
       }
 
       if (fromX !== x) {
-        self._el.scrollLeft = Math.floor((easedT * (x - fromX)) + fromX);
+        self.setLeft(Math.floor((easedT * (x - fromX)) + fromX));
       }
 
       if (easedT < 1) {
-        self._dom.write(step);
+        nativeRaf(step);
 
       } else {
         self._el.style.transform = ``;
