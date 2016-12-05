@@ -126,19 +126,23 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
   _sbPadding: boolean;
 
   /*  @internal */
-  _paddingTop: number;
+  _cTop: number;
   /*  @internal */
-  _paddingRight: number;
+  _cBottom: number;
   /*  @internal */
-  _paddingBottom: number;
+  _pTop: number;
   /*  @internal */
-  _paddingLeft: number;
+  _pRight: number;
+  /*  @internal */
+  _pBottom: number;
+  /*  @internal */
+  _pLeft: number;
   /*  @internal */
   _scrollPadding: number = 0;
   /*  @internal */
-  _headerHeight: number;
+  _hdrHeight: number;
   /*  @internal */
-  _footerHeight: number;
+  _ftrHeight: number;
   /*  @internal */
   _tabbarHeight: number;
   /*  @internal */
@@ -158,7 +162,7 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
   /*  @internal */
   _footerEle: HTMLElement;
   /*  @internal */
-  _dirty: boolean = false;
+  _dirty: boolean;
   /*  @internal */
   _scrollEle: HTMLElement;
   /*  @internal */
@@ -596,22 +600,22 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
    * DOM READ
    */
   readDimensions() {
-    let cachePaddingTop = this._paddingTop;
-    let cachePaddingRight = this._paddingRight;
-    let cachePaddingBottom = this._paddingBottom;
-    let cachePaddingLeft = this._paddingLeft;
-    let cacheHeaderHeight = this._headerHeight;
-    let cacheFooterHeight = this._footerHeight;
+    let cachePaddingTop = this._pTop;
+    let cachePaddingRight = this._pRight;
+    let cachePaddingBottom = this._pBottom;
+    let cachePaddingLeft = this._pLeft;
+    let cacheHeaderHeight = this._hdrHeight;
+    let cacheFooterHeight = this._ftrHeight;
     let cacheTabsPlacement = this._tabsPlacement;
 
     this.scrollWidth = 0;
     this.scrollHeight = 0;
-    this._paddingTop = 0;
-    this._paddingRight = 0;
-    this._paddingBottom = 0;
-    this._paddingLeft = 0;
-    this._headerHeight = 0;
-    this._footerHeight = 0;
+    this._pTop = 0;
+    this._pRight = 0;
+    this._pBottom = 0;
+    this._pLeft = 0;
+    this._hdrHeight = 0;
+    this._ftrHeight = 0;
     this._tabsPlacement = null;
 
     let ele: HTMLElement = this._elementRef.nativeElement;
@@ -628,22 +632,27 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
       ele = <HTMLElement>children[i];
       tagName = ele.tagName;
       if (tagName === 'ION-CONTENT') {
+        // ******** DOM READ ****************
         this.scrollWidth = ele.scrollWidth;
+        // ******** DOM READ ****************
         this.scrollHeight = ele.scrollHeight;
 
         if (this._fullscreen) {
+          // ******** DOM READ ****************
           computedStyle = getComputedStyle(ele);
-          this._paddingTop = parsePxUnit(computedStyle.paddingTop);
-          this._paddingBottom = parsePxUnit(computedStyle.paddingBottom);
-          this._paddingRight = parsePxUnit(computedStyle.paddingRight);
-          this._paddingLeft = parsePxUnit(computedStyle.paddingLeft);
+          this._pTop = parsePxUnit(computedStyle.paddingTop);
+          this._pBottom = parsePxUnit(computedStyle.paddingBottom);
+          this._pRight = parsePxUnit(computedStyle.paddingRight);
+          this._pLeft = parsePxUnit(computedStyle.paddingLeft);
         }
 
       } else if (tagName === 'ION-HEADER') {
-        this._headerHeight = ele.clientHeight;
+        // ******** DOM READ ****************
+        this._hdrHeight = ele.clientHeight;
 
       } else if (tagName === 'ION-FOOTER') {
-        this._footerHeight = ele.clientHeight;
+        // ******** DOM READ ****************
+        this._ftrHeight = ele.clientHeight;
         this._footerEle = ele;
       }
     }
@@ -655,6 +664,7 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
 
       if (ele.tagName === 'ION-TABS') {
         tabbarEle = <HTMLElement>ele.firstElementChild;
+        // ******** DOM READ ****************
         this._tabbarHeight = tabbarEle.clientHeight;
 
         if (this._tabsPlacement === null) {
@@ -666,15 +676,37 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
       ele = ele.parentElement;
     }
 
+    // Toolbar height
+    this._cTop = this._hdrHeight;
+    this._cBottom = this._ftrHeight;
+
+    // Tabs height
+    if (this._tabsPlacement === 'top') {
+      this._cTop += this._tabbarHeight;
+
+    } else if (this._tabsPlacement === 'bottom') {
+      this._cBottom += this._tabbarHeight;
+    }
+
+    // Handle fullscreen viewport (padding vs margin)
+    if (this._fullscreen) {
+      this._cTop += this._pTop;
+      this._cBottom += this._pBottom;
+    }
+
     this._dirty = (
-      cachePaddingTop !== this._paddingTop ||
-      cachePaddingBottom !== this._paddingBottom ||
-      cachePaddingLeft !== this._paddingLeft ||
-      cachePaddingRight !== this._paddingRight ||
-      cacheHeaderHeight !== this._headerHeight ||
-      cacheFooterHeight !== this._footerHeight ||
-      cacheTabsPlacement !== this._tabsPlacement
+      cachePaddingTop !== this._pTop ||
+      cachePaddingBottom !== this._pBottom ||
+      cachePaddingLeft !== this._pLeft ||
+      cachePaddingRight !== this._pRight ||
+      cacheHeaderHeight !== this._hdrHeight ||
+      cacheFooterHeight !== this._ftrHeight ||
+      cacheTabsPlacement !== this._tabsPlacement ||
+      this._cTop !== this.contentTop ||
+      this._cBottom !== this.contentBottom
     );
+
+    this._scroll.init(this._scrollEle, this._cTop, this._cBottom);
 
     // initial imgs refresh
     this.imgsRefresh();
@@ -693,7 +725,6 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
     }
 
     const scrollEle = this._scrollEle as any;
-
     if (!scrollEle) {
       assert(false, 'this._scrollEle should be valid');
       return;
@@ -705,79 +736,70 @@ export class Content extends Ion implements AfterViewInit, OnDestroy {
       return;
     }
 
-    // Toolbar height
-    let contentTop = this._headerHeight;
-    let contentBottom = this._footerHeight;
-
     // Tabs height
-    if (this._tabsPlacement === 'top') {
-      assert(this._tabbarHeight >= 0, '_tabbarHeight has to be positive');
-      contentTop += this._tabbarHeight;
-
-    } else if (this._tabsPlacement === 'bottom') {
-      assert(this._tabbarHeight >= 0, '_tabbarHeight has to be positive');
-      contentBottom += this._tabbarHeight;
-
-      // Update footer position
-      if (contentBottom > 0 && this._footerEle) {
-        let footerPos = contentBottom - this._footerHeight;
-        assert(footerPos >= 0, 'footerPos has to be positive');
-
-        this._footerEle.style.bottom = cssFormat(footerPos);
-      }
+    if (this._tabsPlacement === 'bottom' && this._cBottom > 0 && this._footerEle) {
+      var footerPos = this._cBottom - this._ftrHeight;
+      assert(footerPos >= 0, 'footerPos has to be positive');
+      // ******** DOM WRITE ****************
+      this._footerEle.style.bottom = cssFormat(footerPos);
     }
 
     // Handle fullscreen viewport (padding vs margin)
     let topProperty = 'marginTop';
     let bottomProperty = 'marginBottom';
-    let fixedTop: number = contentTop;
-    let fixedBottom: number = contentBottom;
+    let fixedTop: number = this._cTop;
+    let fixedBottom: number = this._cBottom;
+
     if (this._fullscreen) {
-      assert(this._paddingTop >= 0, '_paddingTop has to be positive');
-      assert(this._paddingBottom >= 0, '_paddingBottom has to be positive');
+      assert(this._pTop >= 0, '_paddingTop has to be positive');
+      assert(this._pBottom >= 0, '_paddingBottom has to be positive');
 
       // adjust the content with padding, allowing content to scroll under headers/footers
       // however, on iOS you cannot control the margins of the scrollbar (last tested iOS9.2)
       // only add inline padding styles if the computed padding value, which would
       // have come from the app's css, is different than the new padding value
-      contentTop += this._paddingTop;
-      contentBottom += this._paddingBottom;
       topProperty = 'paddingTop';
       bottomProperty = 'paddingBottom';
     }
 
     // Only update top margin if value changed
-    if (contentTop !== this.contentTop) {
-      assert(contentTop >= 0, 'contentTop has to be positive');
+    if (this._cTop !== this.contentTop) {
+      assert(this._cTop >= 0, 'contentTop has to be positive');
       assert(fixedTop >= 0, 'fixedTop has to be positive');
 
-      scrollEle.style[topProperty] = cssFormat(contentTop);
+      // ******** DOM WRITE ****************
+      scrollEle.style[topProperty] = cssFormat(this._cTop);
+      // ******** DOM WRITE ****************
       fixedEle.style.marginTop = cssFormat(fixedTop);
-      this.contentTop = contentTop;
+
+      this.contentTop = this._cTop;
     }
 
     // Only update bottom margin if value changed
-    if (contentBottom !== this.contentBottom) {
-      assert(contentBottom >= 0, 'contentBottom has to be positive');
+    if (this._cBottom !== this.contentBottom) {
+      assert(this._cBottom >= 0, 'contentBottom has to be positive');
       assert(fixedBottom >= 0, 'fixedBottom has to be positive');
 
-      scrollEle.style[bottomProperty] = cssFormat(contentBottom);
+      // ******** DOM WRITE ****************
+      scrollEle.style[bottomProperty] = cssFormat(this._cBottom);
+      // ******** DOM WRITE ****************
       fixedEle.style.marginBottom = cssFormat(fixedBottom);
-      this.contentBottom = contentBottom;
+
+      this.contentBottom = this._cBottom;
     }
 
     if (this._tabsPlacement !== null && this._tabs) {
       // set the position of the tabbar
       if (this._tabsPlacement === 'top') {
-        this._tabs.setTabbarPosition(this._headerHeight, -1);
+        // ******** DOM WRITE ****************
+        this._tabs.setTabbarPosition(this._hdrHeight, -1);
 
       } else {
         assert(this._tabsPlacement === 'bottom', 'tabsPlacement should be bottom');
+        // ******** DOM WRITE ****************
         this._tabs.setTabbarPosition(-1, 0);
       }
     }
-
-    this._scroll.init(this._scrollEle, this.contentTop, this.contentBottom);
 
     this.writeReady.emit();
   }
