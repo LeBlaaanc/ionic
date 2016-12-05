@@ -444,6 +444,7 @@ export class ScrollView {
         nativeRaf(step);
 
       } else {
+        self.isScrolling = false;
         self._el.style.transform = ``;
         done();
       }
